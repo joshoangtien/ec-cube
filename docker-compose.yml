@@ -1,0 +1,114 @@
+version: "3"
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  mysql-database:
+    driver: local
+  mailcatcher-data:
+    driver: local
+
+  ### ignore folder volume #####
+  var:
+    driver: local
+  vendor:
+    driver: local
+  node_modules:
+    driver: local
+
+services:
+  ### ECCube4 ##################################
+  ec-cube:
+    ### ローカルでビルドする場合は以下のコマンドを使用します
+    ## docker build -t ec-cube --no-cache --pull --build-arg TAG=8.1-apache .
+    ## docker tag ec-cube ghcr.io/ec-cube/ec-cube-php:8.1-apache
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAME:-ec-cube/ec-cube-php}:${TAG:-8.1-apache}
+    ports:
+      - 8181:80
+      - 4430:443
+    volumes:
+      ### 同期対象からコストの重いフォルダを除外 #####################
+      - "var:/var/www/html/var"
+      - "vendor:/var/www/html/vendor"
+      - "node_modules:/var/www/html/node_modules"
+      - ".:/var/www/html:cached"
+    environment:
+      # EC-CUBE environments
+      APP_ENV: "dev"
+      APP_DEBUG: 1
+      DATABASE_URL: "mysql://dbuser:secret@mysql/eccubedb"
+      DATABASE_SERVER_VERSION: 5.7
+      DATABASE_CHARSET: 'utf8mb4'
+      MAILER_DSN: "smtp://mailcatcher:1025"
+      ECCUBE_AUTH_MAGIC: "<change.me>"
+      # TRUSTED_HOSTS: '^127.0.0.1$$,^localhost$$'
+      # ECCUBE_LOCALE: "ja"
+      # ECCUBE_TIMEZONE: "Asia/Tokyo"
+      # ECCUBE_CURRENCY: "JPY"
+      # ECCUBE_ADMIN_ROUTE: "admin"
+      # ECCUBE_USER_DATA_ROUTE: "user_data"
+      # ECCUBE_ADMIN_ALLOW_HOSTS: []
+      # ECCUBE_FORCE_SSL: false
+      # ECCUBE_TEMPLATE_CODE: "default"
+      # ECCUBE_COOKIE_NAME: "eccube"
+      # ECCUBE_COOKIE_PATH: "/"
+      # ECCUBE_COOKIE_LIFETIME: 0
+      # ECCUBE_GC_MAXLIFETIME: 1440
+      # ECCUBE_ADMIN_USER: "admin"
+      # ECCUBE_ADMIN_PASS: "password"
+
+      USER_ID: ${UID:-}
+      GROUP_ID: ${GID:-}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - backend
+
+  ### MySQL ##################################
+  mysql:
+    image: mysql:5.7
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_USER: dbuser
+      MYSQL_PASSWORD: secret
+    volumes:
+      - mysql-database:/var/lib/mysql
+      - ./dockerbuild/grant_to_dbuser.sql:/docker-entrypoint-initdb.d/grant_to_dbuser.sql
+    ports:
+      - 13308:3306
+    networks:
+      - backend
+    healthcheck:
+      test: mysqladmin ping
+      interval: 3s
+      timeout: 3s
+      retries: 3
+
+  ### PHPMyAdmin ##################################
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: ec-phpmyadmin
+    links:
+      - mysql:mysql
+    ports:
+      - 13309:80
+    volumes:
+      - ./phpmyadmin/sessions:/sessions
+    environment:
+      PMA_HOST: mysql
+      PMA_USER: dbuser
+      PMA_PASSWORD: secret
+    networks:
+      - backend
+
+  ### Mailcatcher ##################################
+  mailcatcher:
+    image: schickling/mailcatcher
+    ports:
+      - "1085:1080"
+      - "1025:1025"
+    networks:
+      - backend
